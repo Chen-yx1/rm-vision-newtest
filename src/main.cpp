@@ -1,183 +1,261 @@
 #include <iostream>
-#include <chrono>
+#include <fstream>
 #include <opencv2/opencv.hpp>
-
 #include "armor_detector/detector.hpp"
-#include "armor_detector/params_loader.hpp"
+
+rm_auto_aim::DetectorParams g_params;
+rm_auto_aim::Detector* g_detector_ptr = nullptr;
+
+void onTrackbarChange(int, void*) {
+    if (g_detector_ptr) {
+        *g_detector_ptr = rm_auto_aim::Detector(g_params);
+    }
+}
+
+void drawDebugInfo(cv::Mat& img, const rm_auto_aim::Detector::DebugInfo& info, 
+                   const rm_auto_aim::DetectorParams& params) {
+    int y_offset = 25;
+    int line_height = 25;
+    
+    cv::rectangle(img, cv::Point(5, 5), cv::Point(400, 180), cv::Scalar(0, 0, 0), cv::FILLED);
+    cv::rectangle(img, cv::Point(5, 5), cv::Point(400, 180), cv::Scalar(255, 255, 255), 1);
+    
+    cv::putText(img, "RM Vision 2.2.1.2 - Armor Detection", 
+                cv::Point(10, y_offset), cv::FONT_HERSHEY_SIMPLEX, 0.6, 
+                cv::Scalar(0, 255, 255), 1);
+    y_offset += line_height;
+    
+    std::string result_text = "Armors: " + std::to_string(info.armors_found) +
+                             " | Lights: " + std::to_string(info.target_color_lights);
+    cv::putText(img, result_text, cv::Point(10, y_offset), 
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 0), 1);
+    y_offset += line_height;
+    
+    std::string time_text = "Time: " + std::to_string(info.process_time_ms) + " ms";
+    cv::putText(img, time_text, cv::Point(10, y_offset), 
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(200, 200, 200), 1);
+    y_offset += line_height;
+    
+    std::string color_text = "Color: " + std::string(params.detect_color == rm_auto_aim::RED ? "RED" : "BLUE");
+    cv::putText(img, color_text, cv::Point(10, y_offset), 
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200, 200, 200), 1);
+    y_offset += line_height - 5;
+    
+    std::string param_text = "V_min: " + std::to_string(params.hsv_red.v_min) + 
+                           " | S_min: " + std::to_string(params.hsv_red.s_min);
+    cv::putText(img, param_text, cv::Point(10, y_offset), 
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200, 200, 200), 1);
+    y_offset += line_height - 5;
+    
+    cv::putText(img, "q=quit, s=save, space=pause, +/-=V_min", 
+                cv::Point(10, y_offset), cv::FONT_HERSHEY_SIMPLEX, 0.4, 
+                cv::Scalar(150, 150, 255), 1);
+}
 
 int main(int argc, char** argv) {
-    std::cout << "==========================================" << std::endl;
-    std::cout << "RoboMaster 视觉考核 - 装甲板识别 (2.2.1.1)" << std::endl;
-    std::cout << "编译时间: " << __DATE__ << " " << __TIME__ << std::endl;
-    std::cout << "==========================================" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "RoboMaster Vision 2.2.1.2 - Armor Matching" << std::endl;
+    std::cout << "========================================" << std::endl;
     
-    // 检查命令行参数
-    if (argc < 2) {
-        std::cerr << "❌ 使用方法: " << argv[0] << " <视频文件路径>" << std::endl;
-        std::cerr << "示例: " << argv[0] << " test_video.mp4" << std::endl;
-        std::cerr << "示例: " << argv[0] << " 0 (使用摄像头)" << std::endl;
-        return -1;
+    std::string video_source = "test_video.mp4";
+    bool use_camera = false;
+    
+    if (argc >= 2) {
+        video_source = argv[1];
+        if (video_source == "camera" || video_source == "0") {
+            use_camera = true;
+            video_source = "0";
+        }
     }
     
-    // 打开视频文件
-    std::string video_path = argv[1];
     cv::VideoCapture cap;
-    
-    if (video_path == "0" || video_path == "1") {
-        std::cout << "📷 尝试打开摄像头 " << video_path << std::endl;
-        cap.open(std::stoi(video_path));
+    if (use_camera) {
+        cap.open(0);
+        if (!cap.isOpened()) {
+            std::cerr << "[ERROR] Cannot open camera!" << std::endl;
+            return -1;
+        }
+        std::cout << "[INFO] Using camera" << std::endl;
     } else {
-        std::cout << "🎬 打开视频文件: " << video_path << std::endl;
-        cap.open(video_path);
+        cap.open(video_source);
+        if (!cap.isOpened()) {
+            std::cerr << "[ERROR] Cannot open video file: " << video_source << std::endl;
+            std::cerr << "[INFO] Trying to use camera..." << std::endl;
+            cap.open(0);
+            use_camera = true;
+            
+            if (!cap.isOpened()) {
+                std::cerr << "[ERROR] Cannot open camera either!" << std::endl;
+                return -1;
+            }
+        } else {
+            std::cout << "[INFO] Using video file: " << video_source << std::endl;
+        }
     }
     
-    if (!cap.isOpened()) {
-        std::cerr << "❌ 无法打开视频源: " << video_path << std::endl;
-        return -1;
-    }
+    g_params.detect_color = rm_auto_aim::RED;
+    g_params.hsv_red.v_min = 100;
+    g_params.hsv_red.v_max = 255;
+    g_params.hsv_red.s_min = 100;
+    g_params.hsv_red.s_max = 255;
     
-    // 获取视频信息
-    int width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
-    int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
-    double fps = cap.get(cv::CAP_PROP_FPS);
-    int total_frames = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
+    rm_auto_aim::Detector detector(g_params);
+    g_detector_ptr = &detector;
     
-    std::cout << "✅ 视频源打开成功" << std::endl;
-    std::cout << "   分辨率: " << width << "x" << height << std::endl;
-    std::cout << "   帧率: " << fps << " FPS" << std::endl;
-    if (total_frames > 0) {
-        std::cout << "   总帧数: " << total_frames << std::endl;
-    }
+    cv::namedWindow("Armor Detection", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Armor Detection", 800, 600);
+    cv::namedWindow("Binary Mask", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Binary Mask", 400, 300);
     
-    // 创建检测器
-    auto params = rm_auto_aim::createDefaultParams();
-    rm_auto_aim::Detector detector(params);
+    cv::createTrackbar("V_min", "Armor Detection", &g_params.hsv_red.v_min, 
+                       255, onTrackbarChange);
+    cv::createTrackbar("S_min", "Armor Detection", &g_params.hsv_red.s_min, 
+                       255, onTrackbarChange);
     
-    std::cout << "\n🚀 开始处理视频..." << std::endl;
-    std::cout << "   按 'q' 键退出" << std::endl;
-    std::cout << "   按 ' ' 空格键暂停" << std::endl;
-    std::cout << "   按 's' 键保存当前帧" << std::endl;
-    std::cout << "==========================================" << std::endl;
+    std::cout << "\n[CONTROLS]" << std::endl;
+    std::cout << "  q / ESC   - Quit" << std::endl;
+    std::cout << "  s         - Save current frame" << std::endl;
+    std::cout << "  space     - Pause/Resume" << std::endl;
+    std::cout << "  +/-       - Adjust V_min" << std::endl;
+    std::cout << "  c         - Toggle color (RED/BLUE)" << std::endl;
+    std::cout << "  r         - Reset parameters" << std::endl;
+    std::cout << "\n[STARTING ARMOR DETECTION]" << std::endl;
     
     cv::Mat frame;
     int frame_count = 0;
-    double total_process_time = 0;
+    bool paused = false;
     
     while (true) {
-        auto frame_start = std::chrono::high_resolution_clock::now();
-        
-        // 读取一帧
-        if (!cap.read(frame)) {
-            if (frame_count == 0) {
-                std::cerr << "❌ 无法读取视频帧" << std::endl;
-                break;
-            } else {
-                std::cout << "✅ 视频播放完成" << std::endl;
-                break;
-            }
-        }
-        
-        frame_count++;
-        
-        // 1. 预处理（颜色分割）
-        auto preprocess_start = std::chrono::high_resolution_clock::now();
-        cv::Mat binary = detector.preprocessImage(frame);
-        auto preprocess_end = std::chrono::high_resolution_clock::now();
-        double preprocess_time = std::chrono::duration<double>(preprocess_end - preprocess_start).count() * 1000;
-        
-        // 2. 查找灯条
-        auto find_start = std::chrono::high_resolution_clock::now();
-        auto lights = detector.findLights(binary);
-        auto find_end = std::chrono::high_resolution_clock::now();
-        double find_time = std::chrono::duration<double>(find_end - find_start).count() * 1000;
-        
-        // 3. 在原始帧上绘制结果
-        cv::Mat display_frame = frame.clone();
-        
-        // 绘制每个检测到的灯条
-        for (const auto& light : lights) {
-            cv::Point2f vertices[4];
-            light.rect.points(vertices);
-            
-            // 绘制旋转矩形（绿色）
-            for (int j = 0; j < 4; j++) {
-                cv::line(display_frame, vertices[j], vertices[(j + 1) % 4], 
-                        cv::Scalar(0, 255, 0), 2);
+        if (!paused) {
+            if (!cap.read(frame)) {
+                if (use_camera) {
+                    cap.release();
+                    cap.open(0);
+                    continue;
+                } else {
+                    std::cout << "[INFO] Video ended" << std::endl;
+                    break;
+                }
             }
             
-            // 绘制中心点（红色）
-            cv::circle(display_frame, light.center, 3, cv::Scalar(0, 0, 255), -1);
+            frame_count++;
             
-            // 显示灯条信息
-            std::string info = "L:" + std::to_string(int(light.length)) + 
-                              " R:" + std::to_string(light.width/light.length).substr(0,4);
-            cv::putText(display_frame, info, 
-                       cv::Point(light.center.x + 5, light.center.y - 5),
-                       cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 0), 1);
+            // 检测装甲板
+            auto armors = detector.detect(frame);
+            auto debug_info = detector.getDebugInfo();
+            auto lights = detector.getLights();
+            cv::Mat binary = detector.getBinaryImage();
+            
+            // 创建显示图像
+            cv::Mat display_frame = frame.clone();
+            
+            // 绘制灯条
+            for (const auto& light : lights) {
+                cv::Scalar light_color = (light.color == rm_auto_aim::RED) ? 
+                    cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
+                
+                cv::Point2f vertices[4];
+                light.rect.points(vertices);
+                
+                for (int j = 0; j < 4; j++) {
+                    cv::line(display_frame, vertices[j], vertices[(j + 1) % 4], light_color, 1);
+                }
+                cv::circle(display_frame, light.center, 2, cv::Scalar(0, 255, 255), -1);
+            }
+            
+             // 在main.cpp中，找到绘制装甲板的部分
+            for (const auto& armor : armors) {
+                  cv::Scalar armor_color = (armor.type == rm_auto_aim::ArmorType::SMALL) ? 
+                      cv::Scalar(0, 255, 0) : cv::Scalar(0, 165, 255);
+    
+            // 这一行是第170行 - 确保armor是const引用
+            armor.draw(display_frame, armor_color, 2);
+    
+             // 显示装甲板中心坐标
+            std::string coord_text = "(" + std::to_string((int)armor.center.x) + 
+                           ", " + std::to_string((int)armor.center.y) + ")";
+            cv::putText(display_frame, coord_text, 
+                     armor.center + cv::Point2f(5, -5),
+                     cv::FONT_HERSHEY_SIMPLEX, 0.4, 
+                     cv::Scalar(255, 255, 255), 1);
+}
+            
+            drawDebugInfo(display_frame, debug_info, g_params);
+            
+            std::string frame_text = "Frame: " + std::to_string(frame_count);
+            cv::putText(display_frame, frame_text, 
+                       cv::Point(frame.cols - 150, 30),
+                       cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 0), 1);
+            
+            cv::imshow("Armor Detection", display_frame);
+            cv::imshow("Binary Mask", binary);
         }
         
-        auto frame_end = std::chrono::high_resolution_clock::now();
-        double frame_time = std::chrono::duration<double>(frame_end - frame_start).count() * 1000;
-        total_process_time += frame_time;
+        int key = cv::waitKey(paused ? 0 : 30);
         
-        // 在图像上显示帧信息
-        std::string fps_text = "帧: " + std::to_string(frame_count);
-        cv::putText(display_frame, fps_text, cv::Point(10, 25), 
-                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
-        
-        std::string lights_text = "灯条: " + std::to_string(lights.size());
-        cv::putText(display_frame, lights_text, cv::Point(10, 55), 
-                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
-        
-        std::string time_text = "时间: " + std::to_string(int(frame_time)) + "ms";
-        cv::putText(display_frame, time_text, cv::Point(10, 85), 
-                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
-        
-        // 显示图像
-        cv::imshow("装甲板检测结果", display_frame);
-        cv::imshow("二值化图像", binary);
-        
-        // 终端输出（每10帧输出一次）
-        if (frame_count % 10 == 0) {
-            std::cout << "[帧 " << frame_count << "] "
-                      << "灯条: " << lights.size() << ", "
-                      << "预处理: " << preprocess_time << "ms, "
-                      << "检测: " << find_time << "ms, "
-                      << "总计: " << frame_time << "ms" << std::endl;
-        }
-        
-        // 键盘控制
-        int delay_time = 33;  // 约30fps
-if (delay_time < 1) delay_time = 1;
-char key = cv::waitKey(delay_time);
-        if (key == 'q' || key == 27) {  // 'q' 或 ESC
-            std::cout << "⏹️  用户中断" << std::endl;
-            break;
-        } else if (key == ' ') {  // 空格暂停
-            std::cout << "⏸️  暂停，按任意键继续..." << std::endl;
-            cv::waitKey(0);
-        } else if (key == 's') {  // 保存当前帧
-            std::string filename = "frame_" + std::to_string(frame_count) + ".png";
-            cv::imwrite(filename, display_frame);
-            std::cout << "💾 保存帧到: " << filename << std::endl;
+        switch (key) {
+            case 'q':
+            case 27:
+                std::cout << "[INFO] Quitting..." << std::endl;
+                goto exit_loop;
+                
+            case 's':
+            case 'S': {
+                std::string filename = "frame_" + std::to_string(frame_count) + ".jpg";
+                cv::imwrite(filename, frame);
+                std::cout << "[INFO] Saved frame to: " << filename << std::endl;
+                break;
+            }
+                
+            case ' ':
+                paused = !paused;
+                std::cout << "[INFO] " << (paused ? "Paused" : "Resumed") << std::endl;
+                break;
+                
+            case '+':
+            case '=':
+                g_params.hsv_red.v_min = std::min(255, g_params.hsv_red.v_min + 5);
+                onTrackbarChange(0, nullptr);
+                break;
+                
+            case '-':
+            case '_':
+                g_params.hsv_red.v_min = std::max(0, g_params.hsv_red.v_min - 5);
+                onTrackbarChange(0, nullptr);
+                break;
+                
+            case 'c':
+            case 'C':
+                g_params.detect_color = (g_params.detect_color == rm_auto_aim::RED) ? 
+                                       rm_auto_aim::BLUE : rm_auto_aim::RED;
+                onTrackbarChange(0, nullptr);
+                std::cout << "[INFO] Detection color changed to: " 
+                          << (g_params.detect_color == rm_auto_aim::RED ? "RED" : "BLUE") << std::endl;
+                break;
+                
+            case 'r':
+            case 'R':
+                g_params.hsv_red.v_min = 100;
+                g_params.hsv_red.s_min = 100;
+                cv::setTrackbarPos("V_min", "Armor Detection", g_params.hsv_red.v_min);
+                cv::setTrackbarPos("S_min", "Armor Detection", g_params.hsv_red.s_min);
+                onTrackbarChange(0, nullptr);
+                std::cout << "[INFO] Parameters reset" << std::endl;
+                break;
         }
     }
     
-    // 统计信息
-    std::cout << "\n==========================================" << std::endl;
-    std::cout << "📊 处理统计:" << std::endl;
-    std::cout << "   总帧数: " << frame_count << std::endl;
-    if (frame_count > 0) {
-        double avg_time = total_process_time / frame_count;
-        std::cout << "   平均每帧时间: " << avg_time << " ms" << std::endl;
-        std::cout << "   估算帧率: " << 1000.0 / avg_time << " FPS" << std::endl;
-    }
-    std::cout << "==========================================" << std::endl;
-    
-    // 清理
+exit_loop:
     cap.release();
     cv::destroyAllWindows();
     
-    std::cout << "✅ 程序正常结束" << std::endl;
+    std::cout << "\n[SUMMARY]" << std::endl;
+    std::cout << "Total frames processed: " << frame_count << std::endl;
+    std::cout << "Final parameters:" << std::endl;
+    std::cout << "  Color: " << (g_params.detect_color == rm_auto_aim::RED ? "RED" : "BLUE") << std::endl;
+    std::cout << "  V_min: " << g_params.hsv_red.v_min << std::endl;
+    std::cout << "  S_min: " << g_params.hsv_red.s_min << std::endl;
+    std::cout << "\n✅ Task 2.2.1.2 - Armor Matching COMPLETED!" << std::endl;
+    
     return 0;
 }
