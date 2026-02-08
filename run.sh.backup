@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # RoboMaster 视觉考核一键启动脚本
-# 作者: Vin / Chen-yx1
+
 
 set -e
 

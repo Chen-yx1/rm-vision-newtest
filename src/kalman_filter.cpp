@@ -1,98 +1,78 @@
 #include <cmath>
 #include "armor_detector/kalman_filter.hpp"
 
-namespace rm_auto_aim {
+namespace rm_auto_aim
+{
 
-KalmanFilter::KalmanFilter() {
-    initMatrices();
+KalmanFilter::KalmanFilter()
+  : kf_(stateSize_, measSize_, contrSize_, CV_32F),
+    initialized_(false)
+{
+  initKalmanFilter();
 }
 
-void KalmanFilter::initMatrices() {
-    // 状态维度: 4 (x, vx, y, vy)
-    int state_dim = 4;
-    int measure_dim = 2;
-    
-    state_ = Eigen::VectorXd::Zero(state_dim);
-    
-    // 状态转移矩阵 F
-    F_ = Eigen::MatrixXd::Identity(state_dim, state_dim);
-    
-    // 测量矩阵 H: 只测量位置，不测量速度
-    H_ = Eigen::MatrixXd::Zero(measure_dim, state_dim);
-    H_(0, 0) = 1;  // 测量x
-    H_(1, 2) = 1;  // 测量y
-    
-    // 过程噪声协方差矩阵 Q
-    // 假设位置和速度都有一定的不确定性
-    Q_ = Eigen::MatrixXd::Zero(state_dim, state_dim);
-    double dt = 0.033;  // 假设30fps
-    double sigma_q_pos = 0.1;  // 位置过程噪声
-    double sigma_q_vel = 0.5;  // 速度过程噪声
-    
-    Q_(0, 0) = sigma_q_pos * sigma_q_pos;
-    Q_(1, 1) = sigma_q_vel * sigma_q_vel;
-    Q_(2, 2) = sigma_q_pos * sigma_q_pos;
-    Q_(3, 3) = sigma_q_vel * sigma_q_vel;
-    
-    // 测量噪声协方差矩阵 R
-    R_ = Eigen::MatrixXd::Zero(measure_dim, measure_dim);
-    double sigma_r = 5.0;  // 测量噪声（像素）
-    R_(0, 0) = sigma_r * sigma_r;
-    R_(1, 1) = sigma_r * sigma_r;
-    
-    // 误差协方差矩阵 P
-    P_ = Eigen::MatrixXd::Identity(state_dim, state_dim) * 100.0;
-    
-    // 单位矩阵
-    I_ = Eigen::MatrixXd::Identity(state_dim, state_dim);
-    
-    initialized_ = false;
+void KalmanFilter::initKalmanFilter()
+{
+  // 状态转移矩阵 A (x, vx, y, vy)
+  cv::setIdentity(kf_.transitionMatrix);
+  kf_.transitionMatrix.at<float>(0, 1) = 0.033f;  // dt = 0.033s (30fps)
+  kf_.transitionMatrix.at<float>(2, 3) = 0.033f;
+  
+  // 测量矩阵 H (只测量位置)
+  kf_.measurementMatrix = cv::Mat::zeros(measSize_, stateSize_, CV_32F);
+  kf_.measurementMatrix.at<float>(0, 0) = 1.0f;
+  kf_.measurementMatrix.at<float>(1, 2) = 1.0f;
+  
+  // 过程噪声协方差矩阵 Q
+  kf_.processNoiseCov = cv::Mat::eye(stateSize_, stateSize_, CV_32F) * 0.001f;
+  kf_.processNoiseCov.at<float>(0, 0) = 0.1f;
+  kf_.processNoiseCov.at<float>(1, 1) = 0.5f;
+  kf_.processNoiseCov.at<float>(2, 2) = 0.1f;
+  kf_.processNoiseCov.at<float>(3, 3) = 0.5f;
+  
+  // 测量噪声协方差矩阵 R
+  kf_.measurementNoiseCov = cv::Mat::eye(measSize_, measSize_, CV_32F) * 5.0f;
+  
+  // 后验误差协方差矩阵 P
+  cv::setIdentity(kf_.errorCovPost, cv::Scalar::all(0.1));
+  
+  // 初始化测量向量
+  measurement_ = cv::Mat::zeros(measSize_, 1, CV_32F);
 }
 
-void KalmanFilter::init(const cv::Point2f& initial_pos) {
-    // 初始化状态
-    state_(0) = initial_pos.x;  // x
-    state_(1) = 0.0;            // vx
-    state_(2) = initial_pos.y;  // y
-    state_(3) = 0.0;            // vy
-    
-    // 重置误差协方差
-    P_ = Eigen::MatrixXd::Identity(4, 4) * 100.0;
-    
-    initialized_ = true;
+void KalmanFilter::init(const cv::Point2f& initial_pos)
+{
+  kf_.statePost.at<float>(0) = initial_pos.x;  // x
+  kf_.statePost.at<float>(1) = 0.0f;          // vx
+  kf_.statePost.at<float>(2) = initial_pos.y;  // y
+  kf_.statePost.at<float>(3) = 0.0f;          // vy
+  
+  initialized_ = true;
+  prediction_ = initial_pos;
 }
 
-cv::Point2f KalmanFilter::predict() {
-    if (!initialized_) {
-        return cv::Point2f(0, 0);
-    }
-    
-    // 预测状态
-    state_ = F_ * state_;
-    
-    // 预测误差协方差
-    P_ = F_ * P_ * F_.transpose() + Q_;
-    
-    return cv::Point2f(state_(0), state_(2));
+cv::Point2f KalmanFilter::predict()
+{
+  if (!initialized_) return cv::Point2f(0, 0);
+  
+  cv::Mat prediction = kf_.predict();
+  prediction_.x = prediction.at<float>(0);
+  prediction_.y = prediction.at<float>(2);
+  
+  return prediction_;
 }
 
-void KalmanFilter::update(const cv::Point2f& measurement) {
-    if (!initialized_) {
-        return;
-    }
-    
-    // 转换为Eigen向量
-    Eigen::VectorXd z(2);
-    z << measurement.x, measurement.y;
-    
-    // 计算卡尔曼增益
-    Eigen::MatrixXd K = P_ * H_.transpose() * (H_ * P_ * H_.transpose() + R_).inverse();
-    
-    // 更新状态估计
-    state_ = state_ + K * (z - H_ * state_);
-    
-    // 更新误差协方差
-    P_ = (I_ - K * H_) * P_;
+void KalmanFilter::update(const cv::Point2f& measurement)
+{
+  if (!initialized_) return;
+  
+  measurement_.at<float>(0) = measurement.x;
+  measurement_.at<float>(1) = measurement.y;
+  
+  kf_.correct(measurement_);
+  
+  prediction_.x = kf_.statePost.at<float>(0);
+  prediction_.y = kf_.statePost.at<float>(2);
 }
 
 } // namespace rm_auto_aim
