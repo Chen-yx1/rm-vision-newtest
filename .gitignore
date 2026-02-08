@@ -1,0 +1,9 @@
+# 构建目录
+build/
+# 编译缓存
+CMakeCache.txt
+CMakeFiles/
+# 可执行文件
+armor_detector
+# 系统文件
+.DS_Store

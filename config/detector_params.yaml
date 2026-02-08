@@ -1,0 +1,31 @@
+detector:
+  # 检测颜色: 0=红色, 1=蓝色
+  detect_color: 0
+  
+  # 红色HSV阈值（两个范围）
+  hsv_red:
+    range1:
+      h_min: 0
+      h_max: 10
+    range2:
+      h_min: 160
+      h_max: 180
+    s_min: 100
+    s_max: 255
+    v_min: 100
+    v_max: 255
+  
+  # 蓝色HSV阈值
+  hsv_blue:
+    h_min: 90
+    h_max: 130
+    s_min: 100
+    s_max: 255
+    v_min: 100
+    v_max: 255
+  
+  # 灯条参数
+  light:
+    min_ratio: 0.1     # 最小长宽比
+    max_ratio: 0.4     # 最大长宽比
+    max_angle: 40.0    # 最大倾斜角度(度)

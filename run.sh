@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# RoboMaster 视觉考核一键启动脚本
+# 作者: Vin / Chen-yx1
+
+set -e
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="${PROJECT_DIR}/build"
+VIDEO_FILE="test_video.mp4"
+
+echo -e "${GREEN}===========================================${NC}"
+echo -e "${GREEN}RoboMaster 视觉考核项目 - 装甲板识别${NC}"
+echo -e "${GREEN}===========================================${NC}"
+
+# 检查依赖
+echo -e "${GREEN}[1/5] 检查依赖...${NC}"
+if ! command -v cmake &> /dev/null; then
+    echo -e "${RED}❌ 未找到 CMake，请安装: sudo apt install cmake${NC}"
+    exit 1
+fi
+
+if ! pkg-config --exists opencv4; then
+    echo -e "${RED}❌ 未找到 OpenCV 4，请安装: sudo apt install libopencv-dev${NC}"
+    exit 1
+fi
+
+# 检查视频文件
+echo -e "${GREEN}[2/5] 检查视频文件...${NC}"
+if [ ! -f "${PROJECT_DIR}/${VIDEO_FILE}" ]; then
+    echo -e "${YELLOW}⚠️  未找到测试视频: ${VIDEO_FILE}${NC}"
+    echo -e "${YELLOW}请将测试视频放在项目根目录，或运行: ./build/rm-vision-newtest <视频路径>${NC}"
+fi
+
+# 清理构建
+echo -e "${GREEN}[3/5] 清理旧构建...${NC}"
+rm -rf "${BUILD_DIR}"
+
+# 配置项目
+echo -e "${GREEN}[4/5] 配置项目...${NC}"
+mkdir -p "${BUILD_DIR}"
+cd "${BUILD_DIR}"
+cmake ..
+
+# 编译项目
+echo -e "${GREEN}[5/5] 编译项目...${NC}"
+make -j$(nproc)
+
+echo -e "${GREEN}✅ 编译完成！${NC}"
+echo ""
+
+# 运行程序
+cd "${PROJECT_DIR}"
+if [ -f "test_video.mp4" ]; then
+    echo -e "${GREEN}启动装甲板检测程序...${NC}"
+    echo -e "${YELLOW}按 'q' 退出，按空格暂停${NC}"
+    echo ""
+    if [ -f "build/rm-vision-newtest" ]; then
+        ./build/rm-vision-newtest "test_video.mp4"
+    elif [ -f "build/armor_detector" ]; then
+        ./build/armor_detector "test_video.mp4"
+    else
+        echo -e "${RED}❌ 未找到可执行文件${NC}"
+        echo "请在 build/ 目录中查找可执行文件:"
+        ls -la build/
+    fi
+else
+    echo -e "${YELLOW}请手动运行程序:${NC}"
+    echo "  ./build/rm-vision-newtest <视频文件路径>"
+    echo "或"
+    echo "  ./build/armor_detector <视频文件路径>"
+fi

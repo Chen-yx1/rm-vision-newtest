@@ -1,0 +1,181 @@
+#include <iostream>
+#include <chrono>
+#include <opencv2/opencv.hpp>
+
+#include "armor_detector/detector.hpp"
+#include "armor_detector/params_loader.hpp"
+
+int main(int argc, char** argv) {
+    std::cout << "==========================================" << std::endl;
+    std::cout << "RoboMaster 视觉考核 - 装甲板识别 (2.2.1.1)" << std::endl;
+    std::cout << "编译时间: " << __DATE__ << " " << __TIME__ << std::endl;
+    std::cout << "==========================================" << std::endl;
+    
+    // 检查命令行参数
+    if (argc < 2) {
+        std::cerr << "❌ 使用方法: " << argv[0] << " <视频文件路径>" << std::endl;
+        std::cerr << "示例: " << argv[0] << " test_video.mp4" << std::endl;
+        std::cerr << "示例: " << argv[0] << " 0 (使用摄像头)" << std::endl;
+        return -1;
+    }
+    
+    // 打开视频文件
+    std::string video_path = argv[1];
+    cv::VideoCapture cap;
+    
+    if (video_path == "0" || video_path == "1") {
+        std::cout << "📷 尝试打开摄像头 " << video_path << std::endl;
+        cap.open(std::stoi(video_path));
+    } else {
+        std::cout << "🎬 打开视频文件: " << video_path << std::endl;
+        cap.open(video_path);
+    }
+    
+    if (!cap.isOpened()) {
+        std::cerr << "❌ 无法打开视频源: " << video_path << std::endl;
+        return -1;
+    }
+    
+    // 获取视频信息
+    int width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+    double fps = cap.get(cv::CAP_PROP_FPS);
+    int total_frames = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
+    
+    std::cout << "✅ 视频源打开成功" << std::endl;
+    std::cout << "   分辨率: " << width << "x" << height << std::endl;
+    std::cout << "   帧率: " << fps << " FPS" << std::endl;
+    if (total_frames > 0) {
+        std::cout << "   总帧数: " << total_frames << std::endl;
+    }
+    
+    // 创建检测器
+    auto params = rm_auto_aim::createDefaultParams();
+    rm_auto_aim::Detector detector(params);
+    
+    std::cout << "\n🚀 开始处理视频..." << std::endl;
+    std::cout << "   按 'q' 键退出" << std::endl;
+    std::cout << "   按 ' ' 空格键暂停" << std::endl;
+    std::cout << "   按 's' 键保存当前帧" << std::endl;
+    std::cout << "==========================================" << std::endl;
+    
+    cv::Mat frame;
+    int frame_count = 0;
+    double total_process_time = 0;
+    
+    while (true) {
+        auto frame_start = std::chrono::high_resolution_clock::now();
+        
+        // 读取一帧
+        if (!cap.read(frame)) {
+            if (frame_count == 0) {
+                std::cerr << "❌ 无法读取视频帧" << std::endl;
+                break;
+            } else {
+                std::cout << "✅ 视频播放完成" << std::endl;
+                break;
+            }
+        }
+        
+        frame_count++;
+        
+        // 1. 预处理（颜色分割）
+        auto preprocess_start = std::chrono::high_resolution_clock::now();
+        cv::Mat binary = detector.preprocessImage(frame);
+        auto preprocess_end = std::chrono::high_resolution_clock::now();
+        double preprocess_time = std::chrono::duration<double>(preprocess_end - preprocess_start).count() * 1000;
+        
+        // 2. 查找灯条
+        auto find_start = std::chrono::high_resolution_clock::now();
+        auto lights = detector.findLights(binary);
+        auto find_end = std::chrono::high_resolution_clock::now();
+        double find_time = std::chrono::duration<double>(find_end - find_start).count() * 1000;
+        
+        // 3. 在原始帧上绘制结果
+        cv::Mat display_frame = frame.clone();
+        
+        // 绘制每个检测到的灯条
+        for (const auto& light : lights) {
+            cv::Point2f vertices[4];
+            light.rect.points(vertices);
+            
+            // 绘制旋转矩形（绿色）
+            for (int j = 0; j < 4; j++) {
+                cv::line(display_frame, vertices[j], vertices[(j + 1) % 4], 
+                        cv::Scalar(0, 255, 0), 2);
+            }
+            
+            // 绘制中心点（红色）
+            cv::circle(display_frame, light.center, 3, cv::Scalar(0, 0, 255), -1);
+            
+            // 显示灯条信息
+            std::string info = "L:" + std::to_string(int(light.length)) + 
+                              " R:" + std::to_string(light.width/light.length).substr(0,4);
+            cv::putText(display_frame, info, 
+                       cv::Point(light.center.x + 5, light.center.y - 5),
+                       cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 0), 1);
+        }
+        
+        auto frame_end = std::chrono::high_resolution_clock::now();
+        double frame_time = std::chrono::duration<double>(frame_end - frame_start).count() * 1000;
+        total_process_time += frame_time;
+        
+        // 在图像上显示帧信息
+        std::string fps_text = "帧: " + std::to_string(frame_count);
+        cv::putText(display_frame, fps_text, cv::Point(10, 25), 
+                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
+        
+        std::string lights_text = "灯条: " + std::to_string(lights.size());
+        cv::putText(display_frame, lights_text, cv::Point(10, 55), 
+                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
+        
+        std::string time_text = "时间: " + std::to_string(int(frame_time)) + "ms";
+        cv::putText(display_frame, time_text, cv::Point(10, 85), 
+                   cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
+        
+        // 显示图像
+        cv::imshow("装甲板检测结果", display_frame);
+        cv::imshow("二值化图像", binary);
+        
+        // 终端输出（每10帧输出一次）
+        if (frame_count % 10 == 0) {
+            std::cout << "[帧 " << frame_count << "] "
+                      << "灯条: " << lights.size() << ", "
+                      << "预处理: " << preprocess_time << "ms, "
+                      << "检测: " << find_time << "ms, "
+                      << "总计: " << frame_time << "ms" << std::endl;
+        }
+        
+        // 键盘控制
+        char key = cv::waitKey(1);
+        if (key == 'q' || key == 27) {  // 'q' 或 ESC
+            std::cout << "⏹️  用户中断" << std::endl;
+            break;
+        } else if (key == ' ') {  // 空格暂停
+            std::cout << "⏸️  暂停，按任意键继续..." << std::endl;
+            cv::waitKey(0);
+        } else if (key == 's') {  // 保存当前帧
+            std::string filename = "frame_" + std::to_string(frame_count) + ".png";
+            cv::imwrite(filename, display_frame);
+            std::cout << "💾 保存帧到: " << filename << std::endl;
+        }
+    }
+    
+    // 统计信息
+    std::cout << "\n==========================================" << std::endl;
+    std::cout << "📊 处理统计:" << std::endl;
+    std::cout << "   总帧数: " << frame_count << std::endl;
+    if (frame_count > 0) {
+        double avg_time = total_process_time / frame_count;
+        std::cout << "   平均每帧时间: " << avg_time << " ms" << std::endl;
+        std::cout << "   估算帧率: " << 1000.0 / avg_time << " FPS" << std::endl;
+    }
+    std::cout << "==========================================" << std::endl;
+    
+    // 清理
+    cap.release();
+    cv::destroyAllWindows();
+    
+    std::cout << "✅ 程序正常结束" << std::endl;
+    return 0;
+}
