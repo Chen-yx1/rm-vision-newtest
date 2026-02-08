@@ -1,78 +1,87 @@
 #!/bin/bash
+echo "==========================================="
+echo "RoboMaster 视觉考核项目 - 装甲板识别"
+echo "==========================================="
 
-# RoboMaster 视觉考核一键启动脚本
-# 作者: Vin / Chen-yx1
-
-set -e
-
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="${PROJECT_DIR}/build"
-VIDEO_FILE="test_video.mp4"
-
-echo -e "${GREEN}===========================================${NC}"
-echo -e "${GREEN}RoboMaster 视觉考核项目 - 装甲板识别${NC}"
-echo -e "${GREEN}===========================================${NC}"
-
-# 检查依赖
-echo -e "${GREEN}[1/5] 检查依赖...${NC}"
-if ! command -v cmake &> /dev/null; then
-    echo -e "${RED}❌ 未找到 CMake，请安装: sudo apt install cmake${NC}"
+if [ ! -f "CMakeLists.txt" ]; then
+    echo "❌ 错误：请在项目根目录运行此脚本！"
     exit 1
 fi
 
+echo "[1/5] 检查依赖..."
+# 检查OpenCV
 if ! pkg-config --exists opencv4; then
-    echo -e "${RED}❌ 未找到 OpenCV 4，请安装: sudo apt install libopencv-dev${NC}"
-    exit 1
+    echo "⚠️  未找到OpenCV，尝试安装..."
+    sudo apt-get update
+    sudo apt-get install -y libopencv-dev
 fi
 
-# 检查视频文件
-echo -e "${GREEN}[2/5] 检查视频文件...${NC}"
-if [ ! -f "${PROJECT_DIR}/${VIDEO_FILE}" ]; then
-    echo -e "${YELLOW}⚠️  未找到测试视频: ${VIDEO_FILE}${NC}"
-    echo -e "${YELLOW}请将测试视频放在项目根目录，或运行: ./build/rm-vision-newtest <视频路径>${NC}"
-fi
+echo "[2/5] 检查视频文件..."
+VIDEO_FILE="test_video.mp4"
+CAMERA_MODE=""
 
-# 清理构建
-echo -e "${GREEN}[3/5] 清理旧构建...${NC}"
-rm -rf "${BUILD_DIR}"
-
-# 配置项目
-echo -e "${GREEN}[4/5] 配置项目...${NC}"
-mkdir -p "${BUILD_DIR}"
-cd "${BUILD_DIR}"
-cmake ..
-
-# 编译项目
-echo -e "${GREEN}[5/5] 编译项目...${NC}"
-make -j$(nproc)
-
-echo -e "${GREEN}✅ 编译完成！${NC}"
-echo ""
-
-# 运行程序
-cd "${PROJECT_DIR}"
-if [ -f "test_video.mp4" ]; then
-    echo -e "${GREEN}启动装甲板检测程序...${NC}"
-    echo -e "${YELLOW}按 'q' 退出，按空格暂停${NC}"
-    echo ""
-    if [ -f "build/rm-vision-newtest" ]; then
-        ./build/rm-vision-newtest "test_video.mp4"
-    elif [ -f "build/armor_detector" ]; then
-        ./build/armor_detector "test_video.mp4"
+if [ ! -f "$VIDEO_FILE" ]; then
+    echo "⚠️  未找到视频文件 '$VIDEO_FILE'"
+    read -p "是否使用摄像头？(y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        CAMERA_MODE="camera"
+        echo "✅ 将使用摄像头"
     else
-        echo -e "${RED}❌ 未找到可执行文件${NC}"
-        echo "请在 build/ 目录中查找可执行文件:"
-        ls -la build/
+        echo "❌ 请将 test_video.mp4 放置在项目根目录"
+        exit 1
     fi
 else
-    echo -e "${YELLOW}请手动运行程序:${NC}"
-    echo "  ./build/rm-vision-newtest <视频文件路径>"
-    echo "或"
-    echo "  ./build/armor_detector <视频文件路径>"
+    echo "✅ 找到视频文件: $VIDEO_FILE"
+fi
+
+echo "[3/5] 清理旧构建..."
+rm -rf build/*
+mkdir -p bin build
+
+echo "[4/5] 配置项目..."
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+if [ $? -ne 0 ]; then
+    echo "❌ CMake配置失败！"
+    exit 1
+fi
+
+echo "[5/5] 编译项目..."
+make -j$(nproc)
+if [ $? -ne 0 ]; then
+    echo "❌ 编译失败！"
+    exit 1
+fi
+
+cd ..
+
+echo "✅ 编译完成！"
+
+echo ""
+echo "启动装甲板检测程序..."
+echo "按 'q' 退出，按空格暂停"
+echo ""
+
+# 检查可执行文件在哪里
+if [ -f "bin/rm_vision_newtest" ]; then
+    echo "✅ 在 bin/ 目录找到可执行文件"
+    if [ -z "$CAMERA_MODE" ]; then
+        ./bin/rm_vision_newtest "$VIDEO_FILE"
+    else
+        ./bin/rm_vision_newtest camera
+    fi
+elif [ -f "build/rm_vision_newtest" ]; then
+    echo "✅ 在 build/ 目录找到可执行文件"
+    if [ -z "$CAMERA_MODE" ]; then
+        ./build/rm_vision_newtest "$VIDEO_FILE"
+    else
+        ./build/rm_vision_newtest camera
+    fi
+else
+    echo "❌ 未找到可执行文件"
+    echo "请在以下目录中查找可执行文件:"
+    ls -la bin/ 2>/dev/null || echo "bin/ 目录不存在"
+    ls -la build/ 2>/dev/null || echo "build/ 目录不存在"
+    exit 1
 fi

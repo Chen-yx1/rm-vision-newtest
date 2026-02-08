@@ -2,9 +2,12 @@
 #include <fstream>
 #include <opencv2/opencv.hpp>
 #include "armor_detector/detector.hpp"
+#include "armor_detector/armor.hpp"
+#include "armor_detector/tracker.hpp"  // 新增
 
 rm_auto_aim::DetectorParams g_params;
 rm_auto_aim::Detector* g_detector_ptr = nullptr;
+rm_auto_aim::Tracker g_tracker;  // 新增：跟踪器实例
 
 void onTrackbarChange(int, void*) {
     if (g_detector_ptr) {
@@ -13,14 +16,15 @@ void onTrackbarChange(int, void*) {
 }
 
 void drawDebugInfo(cv::Mat& img, const rm_auto_aim::Detector::DebugInfo& info, 
-                   const rm_auto_aim::DetectorParams& params) {
+                   const rm_auto_aim::DetectorParams& params,
+                   const rm_auto_aim::Tracker& tracker) {  // 修改
     int y_offset = 25;
     int line_height = 25;
     
-    cv::rectangle(img, cv::Point(5, 5), cv::Point(400, 180), cv::Scalar(0, 0, 0), cv::FILLED);
-    cv::rectangle(img, cv::Point(5, 5), cv::Point(400, 180), cv::Scalar(255, 255, 255), 1);
+    cv::rectangle(img, cv::Point(5, 5), cv::Point(400, 200), cv::Scalar(0, 0, 0), cv::FILLED);
+    cv::rectangle(img, cv::Point(5, 5), cv::Point(400, 200), cv::Scalar(255, 255, 255), 1);
     
-    cv::putText(img, "RM Vision 2.2.1.2 - Armor Detection", 
+    cv::putText(img, "RM Vision 2.2.1.3 - Armor Detection + Tracking", 
                 cv::Point(10, y_offset), cv::FONT_HERSHEY_SIMPLEX, 0.6, 
                 cv::Scalar(0, 255, 255), 1);
     y_offset += line_height;
@@ -41,20 +45,52 @@ void drawDebugInfo(cv::Mat& img, const rm_auto_aim::Detector::DebugInfo& info,
                 cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200, 200, 200), 1);
     y_offset += line_height - 5;
     
+    // 新增：跟踪器状态显示
+    std::string tracker_state;
+    switch (tracker.getState()) {
+        case rm_auto_aim::Tracker::LOST:
+            tracker_state = "LOST";
+            break;
+        case rm_auto_aim::Tracker::DETECTING:
+            tracker_state = "DETECTING";
+            break;
+        case rm_auto_aim::Tracker::TRACKING:
+            tracker_state = "TRACKING";
+            break;
+        case rm_auto_aim::Tracker::TEMP_LOST:
+            tracker_state = "TEMP_LOST";
+            break;
+    }
+    
+    std::string tracker_text = "Tracker: " + tracker_state;
+    cv::Scalar tracker_color;
+    if (tracker.getState() == rm_auto_aim::Tracker::TRACKING) {
+        tracker_color = cv::Scalar(0, 255, 0);
+    } else if (tracker.getState() == rm_auto_aim::Tracker::TEMP_LOST) {
+        tracker_color = cv::Scalar(0, 165, 255);
+    } else {
+        tracker_color = cv::Scalar(200, 200, 200);
+    }
+    
+    cv::putText(img, tracker_text, cv::Point(10, y_offset), 
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, tracker_color, 1);
+    y_offset += line_height - 5;
+    
     std::string param_text = "V_min: " + std::to_string(params.hsv_red.v_min) + 
                            " | S_min: " + std::to_string(params.hsv_red.s_min);
     cv::putText(img, param_text, cv::Point(10, y_offset), 
                 cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200, 200, 200), 1);
     y_offset += line_height - 5;
     
-    cv::putText(img, "q=quit, s=save, space=pause, +/-=V_min", 
+    cv::putText(img, "q=quit, s=save, space=pause, +/-=V_min, c=toggle color, r=reset", 
                 cv::Point(10, y_offset), cv::FONT_HERSHEY_SIMPLEX, 0.4, 
                 cv::Scalar(150, 150, 255), 1);
 }
 
 int main(int argc, char** argv) {
     std::cout << "========================================" << std::endl;
-    std::cout << "RoboMaster Vision 2.2.1.2 - Armor Matching" << std::endl;
+    std::cout << "RoboMaster Vision Assessment 2.2.1.3" << std::endl;
+    std::cout << "Task: Armor Detection with Kalman Filter Tracking" << std::endl;
     std::cout << "========================================" << std::endl;
     
     std::string video_source = "test_video.mp4";
@@ -80,7 +116,6 @@ int main(int argc, char** argv) {
         cap.open(video_source);
         if (!cap.isOpened()) {
             std::cerr << "[ERROR] Cannot open video file: " << video_source << std::endl;
-            std::cerr << "[INFO] Trying to use camera..." << std::endl;
             cap.open(0);
             use_camera = true;
             
@@ -102,14 +137,14 @@ int main(int argc, char** argv) {
     rm_auto_aim::Detector detector(g_params);
     g_detector_ptr = &detector;
     
-    cv::namedWindow("Armor Detection", cv::WINDOW_NORMAL);
-    cv::resizeWindow("Armor Detection", 800, 600);
+    cv::namedWindow("Armor Detection + Tracking", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Armor Detection + Tracking", 800, 600);
     cv::namedWindow("Binary Mask", cv::WINDOW_NORMAL);
     cv::resizeWindow("Binary Mask", 400, 300);
     
-    cv::createTrackbar("V_min", "Armor Detection", &g_params.hsv_red.v_min, 
+    cv::createTrackbar("V_min", "Armor Detection + Tracking", &g_params.hsv_red.v_min, 
                        255, onTrackbarChange);
-    cv::createTrackbar("S_min", "Armor Detection", &g_params.hsv_red.s_min, 
+    cv::createTrackbar("S_min", "Armor Detection + Tracking", &g_params.hsv_red.s_min, 
                        255, onTrackbarChange);
     
     std::cout << "\n[CONTROLS]" << std::endl;
@@ -118,8 +153,14 @@ int main(int argc, char** argv) {
     std::cout << "  space     - Pause/Resume" << std::endl;
     std::cout << "  +/-       - Adjust V_min" << std::endl;
     std::cout << "  c         - Toggle color (RED/BLUE)" << std::endl;
-    std::cout << "  r         - Reset parameters" << std::endl;
-    std::cout << "\n[STARTING ARMOR DETECTION]" << std::endl;
+    std::cout << "  r         - Reset parameters and tracker" << std::endl;
+    std::cout << "  t         - Reset tracker only" << std::endl;
+    std::cout << "\n[TRACKER STATES]" << std::endl;
+    std::cout << "  LOST      - No target" << std::endl;
+    std::cout << "  DETECTING - Detected, confirming target" << std::endl;
+    std::cout << "  TRACKING  - Actively tracking target" << std::endl;
+    std::cout << "  TEMP_LOST - Temporarily lost, predicting position" << std::endl;
+    std::cout << "\n[STARTING ARMOR DETECTION WITH TRACKING]" << std::endl;
     
     cv::Mat frame;
     int frame_count = 0;
@@ -146,7 +187,9 @@ int main(int argc, char** argv) {
             auto lights = detector.getLights();
             cv::Mat binary = detector.getBinaryImage();
             
-            // 创建显示图像
+            // 更新跟踪器
+            g_tracker.update(armors);
+            
             cv::Mat display_frame = frame.clone();
             
             // 绘制灯条
@@ -163,31 +206,77 @@ int main(int argc, char** argv) {
                 cv::circle(display_frame, light.center, 2, cv::Scalar(0, 255, 255), -1);
             }
             
-             // 在main.cpp中，找到绘制装甲板的部分
+            // 绘制装甲板
             for (const auto& armor : armors) {
-                  cv::Scalar armor_color = (armor.type == rm_auto_aim::ArmorType::SMALL) ? 
-                      cv::Scalar(0, 255, 0) : cv::Scalar(0, 165, 255);
-    
-            // 这一行是第170行 - 确保armor是const引用
-            armor.draw(display_frame, armor_color, 2);
-    
-             // 显示装甲板中心坐标
-            std::string coord_text = "(" + std::to_string((int)armor.center.x) + 
-                           ", " + std::to_string((int)armor.center.y) + ")";
-            cv::putText(display_frame, coord_text, 
-                     armor.center + cv::Point2f(5, -5),
-                     cv::FONT_HERSHEY_SIMPLEX, 0.4, 
-                     cv::Scalar(255, 255, 255), 1);
-}
+                cv::Scalar armor_color = (armor.type == rm_auto_aim::ArmorType::SMALL) ? 
+                    cv::Scalar(0, 255, 0) : cv::Scalar(0, 165, 255);
+                armor.draw(display_frame, armor_color, 2);
+                
+                std::string coord_text = "(" + std::to_string((int)armor.center.x) + 
+                                       ", " + std::to_string((int)armor.center.y) + ")";
+                cv::putText(display_frame, coord_text, 
+                           armor.center + cv::Point2f(5, -5),
+                           cv::FONT_HERSHEY_SIMPLEX, 0.4, 
+                           cv::Scalar(255, 255, 255), 1);
+            }
             
-            drawDebugInfo(display_frame, debug_info, g_params);
+            // 绘制跟踪器状态和预测位置
+            if (g_tracker.isTracking()) {
+                const auto* tracked_armor = g_tracker.getTrackedArmor();
+                if (tracked_armor) {
+                    // 绘制跟踪的装甲板（用不同颜色）
+                    cv::Scalar tracking_color = cv::Scalar(255, 255, 0); // 黄色
+                    
+                    // 绘制装甲板边界
+                    if (tracked_armor->vertices.size() == 4) {
+                        for (size_t i = 0; i < 4; ++i) {
+                            cv::line(display_frame, tracked_armor->vertices[i], 
+                                    tracked_armor->vertices[(i + 1) % 4], 
+                                    tracking_color, 3);
+                        }
+                    }
+                    
+                    // 绘制跟踪点
+                    cv::circle(display_frame, tracked_armor->center, 5, 
+                              cv::Scalar(0, 255, 255), -1);
+                    
+                    // 显示"TRACKED"文字
+                    cv::putText(display_frame, "TRACKED", 
+                               tracked_armor->center + cv::Point2f(-30, -30),
+                               cv::FONT_HERSHEY_SIMPLEX, 0.7, tracking_color, 2);
+                }
+                
+                // 绘制卡尔曼滤波预测位置
+                cv::Point2f predicted_pos = g_tracker.getPredictedPosition();
+                cv::circle(display_frame, predicted_pos, 8, 
+                          cv::Scalar(255, 0, 255), -1); // 紫色圆点
+                cv::circle(display_frame, predicted_pos, 8, 
+                          cv::Scalar(255, 255, 255), 2); // 白色边框
+                
+                // 绘制预测箭头（速度方向）
+                if (tracked_armor) {
+                    cv::arrowedLine(display_frame, tracked_armor->center, 
+                                   predicted_pos, cv::Scalar(255, 0, 255), 2);
+                    
+                    // 显示预测坐标
+                    std::string pred_text = "Pred: (" + 
+                                           std::to_string((int)predicted_pos.x) + 
+                                           ", " + std::to_string((int)predicted_pos.y) + ")";
+                    cv::putText(display_frame, pred_text, 
+                               predicted_pos + cv::Point2f(10, 10),
+                               cv::FONT_HERSHEY_SIMPLEX, 0.5, 
+                               cv::Scalar(255, 0, 255), 1);
+                }
+            }
+            
+            drawDebugInfo(display_frame, debug_info, g_params, g_tracker);
             
             std::string frame_text = "Frame: " + std::to_string(frame_count);
             cv::putText(display_frame, frame_text, 
                        cv::Point(frame.cols - 150, 30),
                        cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 0), 1);
             
-            cv::imshow("Armor Detection", display_frame);
+            cv::imshow("Armor Detection + Tracking", display_frame);
             cv::imshow("Binary Mask", binary);
         }
         
@@ -237,10 +326,19 @@ int main(int argc, char** argv) {
             case 'R':
                 g_params.hsv_red.v_min = 100;
                 g_params.hsv_red.s_min = 100;
-                cv::setTrackbarPos("V_min", "Armor Detection", g_params.hsv_red.v_min);
-                cv::setTrackbarPos("S_min", "Armor Detection", g_params.hsv_red.s_min);
+                cv::setTrackbarPos("V_min", "Armor Detection + Tracking", g_params.hsv_red.v_min);
+                cv::setTrackbarPos("S_min", "Armor Detection + Tracking", g_params.hsv_red.s_min);
                 onTrackbarChange(0, nullptr);
-                std::cout << "[INFO] Parameters reset" << std::endl;
+                // 重置跟踪器
+                g_tracker = rm_auto_aim::Tracker();
+                std::cout << "[INFO] Parameters and tracker reset" << std::endl;
+                break;
+                
+            case 't':
+            case 'T':
+                // 仅重置跟踪器
+                g_tracker = rm_auto_aim::Tracker();
+                std::cout << "[INFO] Tracker reset" << std::endl;
                 break;
         }
     }
@@ -255,7 +353,15 @@ exit_loop:
     std::cout << "  Color: " << (g_params.detect_color == rm_auto_aim::RED ? "RED" : "BLUE") << std::endl;
     std::cout << "  V_min: " << g_params.hsv_red.v_min << std::endl;
     std::cout << "  S_min: " << g_params.hsv_red.s_min << std::endl;
-    std::cout << "\n✅ Task 2.2.1.2 - Armor Matching COMPLETED!" << std::endl;
+    std::cout << "Tracker final state: ";
+    switch (g_tracker.getState()) {
+        case rm_auto_aim::Tracker::LOST: std::cout << "LOST"; break;
+        case rm_auto_aim::Tracker::DETECTING: std::cout << "DETECTING"; break;
+        case rm_auto_aim::Tracker::TRACKING: std::cout << "TRACKING"; break;
+        case rm_auto_aim::Tracker::TEMP_LOST: std::cout << "TEMP_LOST"; break;
+    }
+    std::cout << std::endl;
+    std::cout << "\n✅ Task 2.2.1.3 - Kalman Filter Tracking COMPLETED!" << std::endl;
     
     return 0;
 }

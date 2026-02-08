@@ -1,49 +1,46 @@
-已完成
-2.2.1.1：灯条识别（红蓝二值化、轮廓提取、矩形框选）
+RoboMaster 装甲板识别系统
+##已完成功能
+2.2.1.1：灯条识别（红/蓝颜色提取、轮廓检测）
 
-2.2.1.2：装甲板匹配（左右灯条配对、中心点拟合、误识别剔除）
+2.2.1.2：装甲板匹配（左右灯条配对、中心点计算）
 
-编译运行
+2.2.1.3：卡尔曼滤波（目标跟踪、位置预测）
+
+##快速开始
 bash
-./run.sh                    # 一键构建运行
-# 或
-cd build && cmake .. && make
-./rm_vision_newtest 视频文件  # 运行检测
-功能特性
-红蓝双色识别
+chmod +x run.sh
+./run.sh                      # 使用视频文件
+./run.sh camera              # 使用摄像头
+##交互控制
+按键	功能
+q/ESC	退出程序
+空格	暂停/继续
+s	保存当前帧
++/-	调整V_min阈值
+c	切换红蓝颜色
+r	重置所有参数
+##实时调节
+V_min滑块：调整亮度阈值（0-255）
 
-实时调试界面
+S_min滑块：调整饱和度阈值（0-255）
 
-参数动态调整
+##项目结构
+text
+rm-vision-newtest/
+├── include/          # 头文件
+├── src/             # 源文件
+├── CMakeLists.txt   # 构建配置
+├── run.sh           # 一键运行脚本
+└── test_video.mp4   # 测试视频
+##编译运行
+bash
+mkdir build && cd build
+cmake .. && make
+cd ..
+./bin/rm_vision_newtest test_video.mp4
 
-装甲板分类（大小）
 
-
-
-
-使用方法
-./rm_vision_newtest test_video.mp4 - 使用视频
-
-./rm_vision_newtest camera - 使用摄像头
-
-控制按键：
-
-q - 退出
-
-s - 保存截图
-
-空格 - 暂停/继续
-
-+/- - 调整阈值
-
-功能
-识别红色/蓝色灯条
-
-实时参数调整
-
-显示二值化图像
-
-环境
+##环境
 Ubuntu 22.04
 
 OpenCV 4.5
