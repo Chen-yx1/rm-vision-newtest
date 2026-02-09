@@ -1,44 +1,56 @@
-RoboMaster 装甲板识别系统
-##已完成功能
-2.2.1.1：灯条识别（红/蓝颜色提取、轮廓检测）
+# RoboMaster 视觉识别系统
 
-2.2.1.2：装甲板匹配（左右灯条配对、中心点计算）
+GitHub 项目地址：https://github.com/Chen-yx1/rm-vision-newtest
 
-2.2.1.3：卡尔曼滤波（目标跟踪、位置预测）
+## 项目背景
+本项目基于 [chenjunnn/rm_auto_aim](https://github.com/chenjunnn/rm_auto_aim?tab=readme-ov-file) 进行了重构.
 
-##快速开始
-bash
-chmod +x run.sh
-./run.sh                      # 使用视频文件
-./run.sh camera              # 使用摄像头
-##交互控制
-按键	功能
-q/ESC	退出程序
-空格	暂停/继续
-s	保存当前帧
-+/-	调整V_min阈值
-c	切换红蓝颜色
-r	重置所有参数
-##实时调节
-V_min滑块：调整亮度阈值（0-255）
+## 核心改进
+- **算法优化**：改进了灯条匹配和装甲板识别算法
+- **代码重构**：将原项目模块化，提高可读性和可维护性
+- **工具链完善**：增加了相机标定、测试视频生成等实用工具
+- **服务集成**：添加了Systemd服务支持，便于实际部署
 
-S_min滑块：调整饱和度阈值（0-255）
+## 快速运行指南
 
-##项目结构
-text
-rm-vision-newtest/
-├── include/          # 头文件
-├── src/             # 源文件
-├── CMakeLists.txt   # 构建配置
-├── run.sh           # 一键运行脚本
-└── test_video.mp4   # 测试视频
-##编译运行
-bash
-mkdir build && cd build
-cmake .. && make
-cd ..
+### 1. 克隆项目
+```bash
+git clone https://github.com/Chen-yx1/rm-vision-newtest.git
+cd rm-vision-newtest
+```
+
+### 2. 安装依赖（Ubuntu）
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake libopencv-dev
+```
+
+### 3. 一键编译
+```bash
+./run.sh
+```
+
+### 4. 运行程序
+```bash
+# 使用摄像头（确保摄像头已连接）
+./bin/rm_vision_newtest camera
+
+# 或使用测试视频（需先放置视频文件）
 ./bin/rm_vision_newtest test_video.mp4
+```
 
+## 主要功能演示
+1. **装甲板识别**：实时检测红/蓝方装甲板
+2. **3D定位**：输出目标距离、角度信息
+3. **目标跟踪**：使用卡尔曼滤波器平滑跟踪
+
+## 关键文件位置
+- 核心识别算法：`src/detector.cpp`
+- 3D坐标解算：`src/pnp_solver.cpp`
+- 项目主入口：`src/main.cpp`
+
+## 鸣谢
+特别感谢 [chenjunnn/rm_auto_aim](https://github.com/chenjunnn/rm_auto_aim) 项目提供的算法基础和代码框架，为我的项目开发奠定了重要基础。
 
 ##环境
 Ubuntu 22.04
